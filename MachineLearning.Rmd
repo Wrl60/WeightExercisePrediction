@@ -1,0 +1,71 @@
+---
+title: "Predicting Exercise Correctness"
+author: "Hezekiah Akiva Bacovcin"
+date: "11 September 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+Using data from Human Activity Recognition dataset, predict weightlifting exercise type from sensor data.
+
+## Load and Process Data
+
+Load the data. Extract dependent variable for training. Build new predictor matrix out of user_name, centered and scaled timestamps and window numbers, and principle components of remaining numeric variables. The test set is also generated. This includes a number of identifying predictors (person performing the exercise and time of exercise) and all numeric variables without NAs or Null results (excludes summary statistics).
+
+```{r load-summary}
+library('caret')
+set.seed(335)
+pml.train<-read.csv('pml-training.csv')
+pml.train$cvtd_timestamp<-as.numeric(pml.train$cvtd_timestamp)
+train.classe <- pml.train$classe
+predictors1 <- c('user_name')
+predictors2 <- names(pml.train)[!(names(pml.train) %in% c('X','classe','new_window',predictors1))]
+predictors2 <- predictors2[sapply(pml.train[,predictors2],function(x){return(sum(is.na(x)))})==0]
+predictors2 <- predictors2[sapply(pml.train[,predictors2],function(x){return(sum(x==''))})==0]
+
+dummies <- dummyVars(num_window~user_name,pml.train)
+pred.train<-as.data.frame(cbind(predict(dummies,newdata=pml.train),pml.train[,predictors2]))
+
+pml.test<-read.csv('pml-testing.csv')
+pred.test<-as.data.frame(cbind(predict(dummies,newdata=pml.test),pml.test[,predictors2]))
+```
+
+I then use CrossValidated model free variable importance to calculare the most important predictor variables using model independent variable importance calculation (mean AUC > .6). New versions of the training and test predictors are created using the predictors selected
+```{r varimp}
+folds <- createFolds(train.classe,k=2)
+varimps <- data.frame()
+for (i in 1:2){
+  varimps <- as.data.frame(rbind(varimps,rowMeans(filterVarImp(pred.train[folds[[i]],],train.classe[folds[[i]]],nonpara=TRUE))))
+}
+variable.importances<-colMeans(varimps)
+realvars<-names(pred.train)[variable.importances>.6]
+
+pred.train<-pred.train[,realvars]
+pred.test<-pred.test[,realvars]
+```
+
+# Generate model
+Set the control parameters for 20-fold cross-validation repeated 2 times. The model is a random forest model. The cross-validated accuracy and kappa score is printed. Random forest is used, since it is relatively quick and generally has low bias.
+
+```{r fit-model}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 20,
+                           repeats = 2,
+                           verboseIter = T)
+
+mod <- train(pred.train,train.classe,method='rf',preProcess = c('medianImpute','center','scale'),trControl=fitControl)
+mod$results
+```
+
+# Predictions
+Use the model to predict the test cases.
+```{r predict}
+predict(mod,newdata=pred.test)
+
+```
+
